@@ -612,10 +612,6 @@
               <span class="stat-val val-dl">${formatSpeed(d.downloadSpeed)}</span>
             </div>
             <div class="stat">
-              <span class="stat-icon">↑</span>
-              <span class="stat-val val-ul">${formatSpeed(d.uploadSpeed)}</span>
-            </div>
-            <div class="stat">
               <span class="stat-icon">⏱</span>
               <span class="stat-val val-eta">${formatEta(d.eta)}</span>
             </div>
@@ -696,9 +692,6 @@
 
     const dlEl = card.querySelector('.val-dl')
     if (dlEl) dlEl.textContent = formatSpeed(d.downloadSpeed)
-
-    const ulEl = card.querySelector('.val-ul')
-    if (ulEl) ulEl.textContent = formatSpeed(d.uploadSpeed)
 
     const etaEl = card.querySelector('.val-eta')
     if (etaEl) etaEl.textContent = formatEta(d.eta)

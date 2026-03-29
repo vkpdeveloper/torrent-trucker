@@ -9,7 +9,14 @@ const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || './downloads'
 
 mkdirSync(DOWNLOAD_DIR, { recursive: true })
 
-const client = new WebTorrent()
+const client = new WebTorrent({
+  maxConns: 200,     // default 55 — more peers = faster downloads
+  dht: true,
+  lsd: true,
+  utp: true,
+  downloadLimit: -1, // unlimited
+  uploadLimit: -1,   // unlimited
+})
 
 client.on('error', (err) => console.error('[WebTorrent]', err))
 
@@ -44,7 +51,29 @@ export function startWorker() {
       await cmdSub.subscribe(cmdChannel)
 
       return new Promise<void>((resolve, reject) => {
-        const torrent = client.add(torrentSource, { path: DOWNLOAD_DIR })
+        const torrent = client.add(torrentSource, { path: DOWNLOAD_DIR, maxWebConns: 100 })
+
+        // Rolling 30-second speed window for stable ETA
+        const WINDOW_MS = 30_000
+        const speedSamples: Array<{ bytes: number; ts: number }> = []
+
+        function rollingEtaMs(): number {
+          const downloaded = torrent.downloaded
+          const now = Date.now()
+          speedSamples.push({ bytes: downloaded, ts: now })
+          // Drop samples outside the window
+          while (speedSamples.length > 1 && speedSamples[0].ts < now - WINDOW_MS) {
+            speedSamples.shift()
+          }
+          if (speedSamples.length < 2) return -1
+          const oldest = speedSamples[0]
+          const elapsed = (now - oldest.ts) / 1000
+          const bytesDelta = downloaded - oldest.bytes
+          if (elapsed <= 0 || bytesDelta <= 0) return -1
+          const avgSpeed = bytesDelta / elapsed // bytes/sec
+          const remaining = torrent.length - downloaded
+          return remaining <= 0 ? 0 : Math.round((remaining / avgSpeed) * 1000)
+        }
 
         const cleanup = () => {
           cmdEmitter.off(cmdChannel, cmdHandler)
@@ -103,20 +132,19 @@ export function startWorker() {
 
         torrent.on('download', async () => {
           const progress = Math.round(torrent.progress * 1000) / 10
+          const eta = rollingEtaMs()
           const update = {
             progress,
             downloadSpeed: Math.round(torrent.downloadSpeed),
-            uploadSpeed: Math.round(torrent.uploadSpeed),
             numPeers: torrent.numPeers,
-            eta: torrent.timeRemaining,
+            eta,
             status: 'downloading',
           }
           await workerRedis.hset(`torrent:info:${job.id}`, {
             progress: progress.toString(),
             downloadSpeed: update.downloadSpeed.toString(),
-            uploadSpeed: update.uploadSpeed.toString(),
             numPeers: update.numPeers.toString(),
-            eta: update.eta.toString(),
+            eta: eta.toString(),
           })
           await publishUpdate({ jobId: job.id, type: 'progress', data: update })
         })
