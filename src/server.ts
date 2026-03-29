@@ -99,6 +99,60 @@ export function startServer(port: number) {
         }
       }
 
+      // ── Magnet link ───────────────────────────────────────────────────────
+      if (method === 'POST' && pathname === '/api/magnet') {
+        try {
+          const { magnetLink } = await req.json() as { magnetLink?: string }
+          if (!magnetLink?.startsWith('magnet:')) {
+            return Response.json({ error: 'Invalid magnet link' }, { status: 400 })
+          }
+
+          // Extract display name from dn= param
+          let name = 'Unknown'
+          try {
+            const params = new URLSearchParams(magnetLink.slice('magnet:?'.length))
+            const dn = params.get('dn')
+            if (dn) name = decodeURIComponent(dn)
+          } catch { /* use fallback */ }
+
+          const job = await downloadQueue.add('download', {
+            magnetLink,
+            name,
+            size: 0,
+            addedAt: Date.now(),
+          })
+
+          await redis.hset(`torrent:info:${job.id}`, {
+            name,
+            size: '0',
+            status: 'queued',
+            progress: '0',
+            downloadSpeed: '0',
+            uploadSpeed: '0',
+            numPeers: '0',
+            eta: '-1',
+            addedAt: Date.now().toString(),
+            files: '[]',
+          })
+
+          await redis.zadd('torrent:jobs', Date.now(), job.id!)
+
+          await pub.publish(
+            'torrent:updates',
+            JSON.stringify({
+              jobId: job.id,
+              type: 'queued',
+              data: { name, size: 0, status: 'queued', progress: 0, addedAt: Date.now() },
+            }),
+          )
+
+          return Response.json({ jobId: job.id, name })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to queue magnet'
+          return Response.json({ error: msg }, { status: 500 })
+        }
+      }
+
       // ── List all downloads ─────────────────────────────────────────────────
       if (method === 'GET' && pathname === '/api/downloads') {
         const ids = await redis.zrevrange('torrent:jobs', 0, -1)

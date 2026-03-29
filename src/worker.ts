@@ -23,19 +23,28 @@ export function startWorker() {
   const worker = new Worker(
     'torrent-downloads',
     async (job: Job) => {
-      const { torrentKey, name: initialName } = job.data as {
-        torrentKey: string
+      const { torrentKey, magnetLink, name: initialName } = job.data as {
+        torrentKey?: string
+        magnetLink?: string
         name: string
       }
 
-      const torrentBuffer = await workerRedis.getBuffer(torrentKey)
-      if (!torrentBuffer) throw new Error('Torrent data not found in Redis')
+      let torrentSource: Buffer | string
+      if (magnetLink) {
+        torrentSource = magnetLink
+      } else if (torrentKey) {
+        const buf = await workerRedis.getBuffer(torrentKey)
+        if (!buf) throw new Error('Torrent data not found in Redis')
+        torrentSource = buf
+      } else {
+        throw new Error('Job has neither torrentKey nor magnetLink')
+      }
 
       const cmdChannel = CMD_CHANNEL(job.id!)
       await cmdSub.subscribe(cmdChannel)
 
       return new Promise<void>((resolve, reject) => {
-        const torrent = client.add(torrentBuffer, { path: DOWNLOAD_DIR })
+        const torrent = client.add(torrentSource, { path: DOWNLOAD_DIR })
 
         const cleanup = () => {
           cmdEmitter.off(cmdChannel, cmdHandler)
@@ -125,7 +134,7 @@ export function startWorker() {
             data: { status: 'completed', progress: 100 },
           })
           cleanup()
-          await workerRedis.del(torrentKey)
+          if (torrentKey) await workerRedis.del(torrentKey as string)
           resolve()
         })
 

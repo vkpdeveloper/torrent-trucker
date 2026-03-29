@@ -104,6 +104,60 @@
       line-height: 1.6;
     }
 
+    /* ── Tabs ────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      background: var(--surface2);
+      border-radius: 10px;
+      padding: 0.25rem;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 0.5rem 1rem;
+      background: none;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: flex; flex-direction: column; gap: 1.25rem; }
+
+    /* ── Magnet input ────────────────────────────────────────── */
+    .magnet-input {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 0.875rem;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 100px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .magnet-input::placeholder { color: var(--text-faint); }
+
+    .magnet-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
     /* ── Drop zone ───────────────────────────────────────────── */
     .upload-card {
       width: 100%;
@@ -299,26 +353,42 @@
   </div>
 
   <div class="upload-card">
-    <div class="drop-zone" id="drop-zone">
-      <div class="icon">📦</div>
-      <div class="label">Drop your .torrent file here</div>
-      <div class="sub">or click to browse</div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="file">📦 .torrent File</button>
+      <button class="tab-btn" data-tab="magnet">🧲 Magnet Link</button>
     </div>
 
-    <input type="file" id="file-input" accept=".torrent" />
-
-    <div class="file-preview" id="file-preview">
-      <div class="file-icon">🗂️</div>
-      <div class="file-info">
-        <div class="file-name" id="preview-name">—</div>
-        <div class="file-size" id="preview-size">—</div>
+    <!-- File tab -->
+    <div class="tab-panel active" id="tab-file">
+      <div class="drop-zone" id="drop-zone">
+        <div class="icon">📦</div>
+        <div class="label">Drop your .torrent file here</div>
+        <div class="sub">or click to browse</div>
       </div>
-      <button class="clear-btn" id="clear-btn" title="Remove file">✕</button>
+
+      <input type="file" id="file-input" accept=".torrent" />
+
+      <div class="file-preview" id="file-preview">
+        <div class="file-icon">🗂️</div>
+        <div class="file-info">
+          <div class="file-name" id="preview-name">—</div>
+          <div class="file-size" id="preview-size">—</div>
+        </div>
+        <button class="clear-btn" id="clear-btn" title="Remove file">✕</button>
+      </div>
+
+      <button class="submit-btn" id="file-submit-btn" disabled>
+        <span id="file-btn-label">Select a torrent file</span>
+      </button>
     </div>
 
-    <button class="submit-btn" id="submit-btn" disabled>
-      <span id="btn-label">Select a torrent file</span>
-    </button>
+    <!-- Magnet tab -->
+    <div class="tab-panel" id="tab-magnet">
+      <textarea class="magnet-input" id="magnet-input" placeholder="Paste magnet link here…&#10;magnet:?xt=urn:btih:…"></textarea>
+      <button class="submit-btn" id="magnet-submit-btn" disabled>
+        <span id="magnet-btn-label">Paste a magnet link</span>
+      </button>
+    </div>
   </div>
 </main>
 
@@ -328,20 +398,21 @@
 </div>
 
 <script>
-  const dropZone   = document.getElementById('drop-zone')
-  const fileInput  = document.getElementById('file-input')
-  const preview    = document.getElementById('file-preview')
-  const previewName = document.getElementById('preview-name')
-  const previewSize = document.getElementById('preview-size')
-  const clearBtn   = document.getElementById('clear-btn')
-  const submitBtn  = document.getElementById('submit-btn')
-  const btnLabel   = document.getElementById('btn-label')
-  const toast      = document.getElementById('toast')
-  const toastMsg   = document.getElementById('toast-msg')
-  const toastIcon  = document.getElementById('toast-icon')
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'))
+      btn.classList.add('active')
+      document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active')
+    })
+  })
 
-  let selectedFile = null
-  let toastTimer = null
+  // ── Shared ────────────────────────────────────────────────────────────────
+  const toast     = document.getElementById('toast')
+  const toastMsg  = document.getElementById('toast-msg')
+  const toastIcon = document.getElementById('toast-icon')
+  let toastTimer  = null
 
   function formatBytes(b) {
     if (!b) return 'Unknown size'
@@ -359,6 +430,17 @@
     toastTimer = setTimeout(() => { toast.className = '' }, 4000)
   }
 
+  // ── File tab ──────────────────────────────────────────────────────────────
+  const dropZone    = document.getElementById('drop-zone')
+  const fileInput   = document.getElementById('file-input')
+  const preview     = document.getElementById('file-preview')
+  const previewName = document.getElementById('preview-name')
+  const previewSize = document.getElementById('preview-size')
+  const clearBtn    = document.getElementById('clear-btn')
+  const fileSubmit  = document.getElementById('file-submit-btn')
+  const fileBtnLabel = document.getElementById('file-btn-label')
+  let selectedFile  = null
+
   function setFile(file) {
     if (!file) return
     selectedFile = file
@@ -366,8 +448,8 @@
     previewSize.textContent = formatBytes(file.size)
     preview.classList.add('visible')
     dropZone.style.display = 'none'
-    submitBtn.disabled = false
-    btnLabel.textContent = 'Start Download'
+    fileSubmit.disabled = false
+    fileBtnLabel.textContent = 'Start Download'
   }
 
   function clearFile() {
@@ -375,21 +457,15 @@
     fileInput.value = ''
     preview.classList.remove('visible')
     dropZone.style.display = ''
-    submitBtn.disabled = true
-    btnLabel.textContent = 'Select a torrent file'
+    fileSubmit.disabled = true
+    fileBtnLabel.textContent = 'Select a torrent file'
   }
 
   dropZone.addEventListener('click', () => fileInput.click())
   fileInput.addEventListener('change', () => setFile(fileInput.files[0]))
   clearBtn.addEventListener('click', clearFile)
-
-  dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault()
-    dropZone.classList.add('drag-over')
-  })
-
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over') })
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
-
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault()
     dropZone.classList.remove('drag-over')
@@ -398,28 +474,59 @@
     else showToast('Please drop a .torrent file', 'error')
   })
 
-  submitBtn.addEventListener('click', async () => {
+  fileSubmit.addEventListener('click', async () => {
     if (!selectedFile) return
-
-    submitBtn.disabled = true
-    btnLabel.innerHTML = '<div class="spinner"></div> Queuing…'
-
+    fileSubmit.disabled = true
+    fileBtnLabel.innerHTML = '<div class="spinner"></div> Queuing…'
     try {
       const form = new FormData()
       form.append('torrent', selectedFile)
-
       const res = await fetch('/api/upload', { method: 'POST', body: form })
       const data = await res.json()
-
       if (!res.ok) throw new Error(data.error || 'Upload failed')
-
       showToast(`"${data.name}" queued for download`, 'success')
       clearFile()
       setTimeout(() => { window.location.href = '/downloads' }, 1200)
     } catch (err) {
       showToast(err.message || 'Upload failed', 'error')
-      submitBtn.disabled = false
-      btnLabel.textContent = 'Start Download'
+      fileSubmit.disabled = false
+      fileBtnLabel.textContent = 'Start Download'
+    }
+  })
+
+  // ── Magnet tab ────────────────────────────────────────────────────────────
+  const magnetInput  = document.getElementById('magnet-input')
+  const magnetSubmit = document.getElementById('magnet-submit-btn')
+  const magnetLabel  = document.getElementById('magnet-btn-label')
+
+  magnetInput.addEventListener('input', () => {
+    const valid = magnetInput.value.trim().startsWith('magnet:')
+    magnetSubmit.disabled = !valid
+    magnetLabel.textContent = valid ? 'Start Download' : 'Paste a magnet link'
+  })
+
+  magnetSubmit.addEventListener('click', async () => {
+    const magnetLink = magnetInput.value.trim()
+    if (!magnetLink.startsWith('magnet:')) return
+    magnetSubmit.disabled = true
+    magnetLabel.innerHTML = '<div class="spinner"></div> Queuing…'
+    try {
+      const res = await fetch('/api/magnet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ magnetLink }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to queue magnet')
+      showToast(`"${data.name}" queued for download`, 'success')
+      magnetInput.value = ''
+      magnetSubmit.disabled = true
+      magnetLabel.textContent = 'Paste a magnet link'
+      setTimeout(() => { window.location.href = '/downloads' }, 1200)
+    } catch (err) {
+      showToast(err.message || 'Failed to queue magnet', 'error')
+      magnetSubmit.disabled = false
+      magnetLabel.textContent = 'Start Download'
     }
   })
 </script>
