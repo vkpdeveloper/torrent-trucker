@@ -20,6 +20,7 @@ function html(name: string) {
 export function startServer(port: number) {
   Bun.serve({
     port,
+    idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url)
       const { method, pathname } = { method: req.method, pathname: url.pathname }
