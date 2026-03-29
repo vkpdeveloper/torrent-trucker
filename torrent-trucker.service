@@ -1,0 +1,15 @@
+[Unit]
+Description=Torrent Trucker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/torrent-trucker
+EnvironmentFile=/path/to/torrent-trucker/.env
+ExecStart=/home/YOUR_USERNAME/.bun/bin/bun src/index.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
