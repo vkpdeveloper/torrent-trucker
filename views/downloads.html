@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Downloads — Torrent Trucker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --surface2: #1a1a24;
+      --surface3: #222232;
+      --border: #2a2a3a;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.2);
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --info: #38bdf8;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-faint: #475569;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Nav ─────────────────────────────────────────────────── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .logo span { color: var(--accent); }
+
+    nav a.nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    nav a.nav-link:hover { color: var(--text); background: var(--surface2); }
+    nav a.nav-link.active { color: var(--accent); background: var(--accent-glow); }
+
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-faint);
+      display: inline-block;
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+
+    .status-dot.connected { background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+    /* ── Main ────────────────────────────────────────────────── */
+    main {
+      flex: 1;
+      max-width: 960px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+    }
+
+    .page-header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .counter {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 0.2rem 0.7rem;
+    }
+
+    /* ── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 6rem 1rem;
+      color: var(--text-muted);
+    }
+
+    .empty-state .empty-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; }
+    .empty-state h3 { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem; }
+    .empty-state p { font-size: 0.875rem; margin-bottom: 1.5rem; }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0.6rem 1.25rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+
+    .btn-primary:hover { background: #4f46e5; }
+
+    /* ── Download card ───────────────────────────────────────── */
+    .download-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .download-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1.5rem;
+      transition: border-color 0.2s;
+    }
+
+    .download-card:hover { border-color: #3a3a4a; }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .status-badge {
+      flex-shrink: 0;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+    }
+
+    .status-badge.downloading { background: rgba(99,102,241,0.15); }
+    .status-badge.paused      { background: rgba(245,158,11,0.15); }
+    .status-badge.completed   { background: rgba(34,197,94,0.15); }
+    .status-badge.error       { background: rgba(239,68,68,0.15); }
+    .status-badge.queued      { background: rgba(56,189,248,0.15); }
+    .status-badge.stopped     { background: rgba(100,116,139,0.15); }
+
+    .card-title-group { flex: 1; min-width: 0; }
+
+    .card-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.3rem;
+      flex-wrap: wrap;
+    }
+
+    .meta-tag {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .status-pill {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.55rem;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .status-pill.downloading { background: var(--accent-glow); color: #a5b4fc; }
+    .status-pill.paused      { background: rgba(245,158,11,0.15); color: var(--warning); }
+    .status-pill.completed   { background: rgba(34,197,94,0.12); color: var(--success); }
+    .status-pill.error       { background: rgba(239,68,68,0.12); color: var(--error); }
+    .status-pill.queued      { background: rgba(56,189,248,0.1); color: var(--info); }
+    .status-pill.stopped     { background: rgba(100,116,139,0.1); color: var(--text-faint); }
+
+    /* ── Progress bar ────────────────────────────────────────── */
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 5px;
+      background: var(--surface3);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.4s ease;
+      background: var(--accent);
+    }
+
+    .progress-fill.completed { background: var(--success); }
+    .progress-fill.paused    { background: var(--warning); }
+    .progress-fill.error     { background: var(--error); }
+
+    .progress-pct {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      min-width: 38px;
+      text-align: right;
+    }
+
+    /* ── Stats row ───────────────────────────────────────────── */
+    .stats-row {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.85rem;
+    }
+
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .stat .val { color: var(--text); font-weight: 500; }
+
+    /* ── Action buttons ──────────────────────────────────────── */
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .action-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.775rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+
+    .action-btn:hover { color: var(--text); background: var(--surface3); border-color: #3a3a4a; }
+
+    .action-btn.danger:hover { color: var(--error); border-color: var(--error); background: rgba(239,68,68,0.08); }
+    .action-btn.success-btn:hover { color: var(--success); border-color: var(--success); background: rgba(34,197,94,0.08); }
+
+    .action-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+    /* ── Error message ───────────────────────────────────────── */
+    .error-msg {
+      font-size: 0.78rem;
+      color: var(--error);
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(239,68,68,0.08);
+      border-radius: 6px;
+      border: 1px solid rgba(239,68,68,0.15);
+    }
+
+    /* ── Connection notice ───────────────────────────────────── */
+    #conn-banner {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.6rem 1rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      opacity: 0;
+      transform: translateY(1rem);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+
+    #conn-banner.show { opacity: 1; transform: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .pulsing { animation: pulse 1.5s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">🚛 <span>Torrent</span>Trucker</a>
+  <div style="display:flex;align-items:center;gap:1rem">
+    <span style="font-size:0.8rem;color:var(--text-muted)">
+      <span class="status-dot" id="conn-dot"></span>
+      <span id="conn-label">Connecting…</span>
+    </span>
+    <div style="display:flex;gap:0.25rem">
+      <a href="/" class="nav-link">Upload</a>
+      <a href="/downloads" class="nav-link active">Downloads</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="page-header">
+    <h1>Downloads</h1>
+    <span class="counter" id="counter">0 items</span>
+  </div>
+
+  <div id="list-container">
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">📭</div>
+      <h3>No downloads yet</h3>
+      <p>Upload a torrent file to get started.</p>
+      <a href="/" class="btn-primary">+ Add Torrent</a>
+    </div>
+    <div class="download-list" id="download-list"></div>
+  </div>
+</main>
+
+<div id="conn-banner">
+  <span class="pulsing">⚡</span> Reconnecting to live updates…
+</div>
+
+<script>
+  const downloadList = document.getElementById('download-list')
+  const emptyState   = document.getElementById('empty-state')
+  const counter      = document.getElementById('counter')
+  const connDot      = document.getElementById('conn-dot')
+  const connLabel    = document.getElementById('conn-label')
+  const connBanner   = document.getElementById('conn-banner')
+
+  // ── State map: jobId → download object ──────────────────────
+  const downloads = new Map()
+
+  // ── Helpers ──────────────────────────────────────────────────
+  function formatBytes(b) {
+    b = Number(b)
+    if (!b || isNaN(b)) return '—'
+    if (b < 1024) return b + ' B'
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'
+    return (b / 1073741824).toFixed(2) + ' GB'
+  }
+
+  function formatSpeed(bps) {
+    bps = Number(bps)
+    if (!bps || isNaN(bps)) return '0 B/s'
+    if (bps < 1024) return bps + ' B/s'
+    if (bps < 1048576) return (bps / 1024).toFixed(1) + ' KB/s'
+    return (bps / 1048576).toFixed(1) + ' MB/s'
+  }
+
+  function formatEta(ms) {
+    ms = Number(ms)
+    if (!ms || ms < 0 || isNaN(ms)) return '—'
+    const s = Math.floor(ms / 1000)
+    if (s < 60) return s + 's'
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's'
+    return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'
+  }
+
+  const statusEmoji = {
+    downloading: '⬇️',
+    paused: '⏸️',
+    completed: '✅',
+    error: '❌',
+    queued: '🕐',
+    stopped: '⏹️',
+  }
+
+  function statusIcon(s) { return statusEmoji[s] || '📦' }
+
+  // ── Render a single card ──────────────────────────────────────
+  function renderCard(d) {
+    const status   = d.status || 'queued'
+    const progress = parseFloat(d.progress) || 0
+    const isActive = status === 'downloading'
+    const isDone   = status === 'completed'
+    const isError  = status === 'error'
+    const isPaused = status === 'paused'
+    const isStopped = status === 'stopped'
+
+    const canPause   = isActive
+    const canResume  = isPaused
+    const canStop    = isActive || isPaused || status === 'queued'
+    const canDelete  = true
+
+    return `
+      <div class="download-card" data-id="${d.id}">
+        <div class="card-header">
+          <div class="status-badge ${status}">${statusIcon(status)}</div>
+          <div class="card-title-group">
+            <div class="card-name" title="${escHtml(d.name || 'Loading…')}">${escHtml(d.name || 'Loading…')}</div>
+            <div class="card-meta">
+              <span class="status-pill ${status}">${status}</span>
+              ${d.size && d.size !== '0' ? `<span class="meta-tag">💾 ${formatBytes(d.size)}</span>` : ''}
+              ${d.numPeers && Number(d.numPeers) > 0 ? `<span class="meta-tag">👥 ${d.numPeers} peers</span>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="progress-row">
+          <div class="progress-track">
+            <div class="progress-fill ${status}" style="width:${Math.min(progress,100)}%"></div>
+          </div>
+          <div class="progress-pct">${isDone ? '100' : progress.toFixed(1)}%</div>
+        </div>
+
+        <div class="stats-row">
+          ${isActive ? `
+            <div class="stat">⬇ <span class="val">${formatSpeed(d.downloadSpeed)}</span></div>
+            <div class="stat">⬆ <span class="val">${formatSpeed(d.uploadSpeed)}</span></div>
+            <div class="stat">⏱ <span class="val">${formatEta(d.eta)}</span></div>
+          ` : ''}
+          ${isPaused ? `<div class="stat" style="color:var(--warning)">Paused at ${progress.toFixed(1)}%</div>` : ''}
+          ${isDone ? `<div class="stat" style="color:var(--success)">Download complete</div>` : ''}
+          ${isStopped ? `<div class="stat">Stopped at ${progress.toFixed(1)}%</div>` : ''}
+          ${status === 'queued' ? `<div class="stat pulsing">Waiting in queue…</div>` : ''}
+        </div>
+
+        ${isError ? `<div class="error-msg">⚠ ${escHtml(d.error || 'An error occurred')}</div>` : ''}
+
+        <div class="card-actions">
+          ${canPause ? `<button class="action-btn" onclick="sendCmd('${d.id}','pause')">⏸ Pause</button>` : ''}
+          ${canResume ? `<button class="action-btn success-btn" onclick="sendCmd('${d.id}','resume')">▶ Resume</button>` : ''}
+          ${canStop ? `<button class="action-btn" onclick="sendCmd('${d.id}','stop')">⏹ Stop</button>` : ''}
+          ${canDelete ? `<button class="action-btn danger" onclick="deleteDownload('${d.id}')">🗑 Delete</button>` : ''}
+        </div>
+      </div>
+    `
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  }
+
+  // ── Re-render the full list ───────────────────────────────────
+  function renderAll() {
+    const items = [...downloads.values()].sort((a, b) => Number(b.addedAt || 0) - Number(a.addedAt || 0))
+    const count = items.length
+
+    counter.textContent = `${count} ${count === 1 ? 'item' : 'items'}`
+    emptyState.style.display = count === 0 ? '' : 'none'
+
+    if (count === 0) {
+      downloadList.innerHTML = ''
+      return
+    }
+
+    // Update only changed cards to avoid flicker
+    items.forEach((d) => {
+      const existing = downloadList.querySelector(`[data-id="${d.id}"]`)
+      const html = renderCard(d)
+      if (!existing) {
+        const el = document.createElement('div')
+        el.innerHTML = html
+        downloadList.prepend(el.firstElementChild)
+      } else {
+        // Only update innerHTML if something meaningful changed
+        const tmp = document.createElement('div')
+        tmp.innerHTML = html
+        const newCard = tmp.firstElementChild
+        // Always update progress/stats area, preserve card position
+        existing.outerHTML = newCard.outerHTML
+      }
+    })
+
+    // Remove stale cards
+    downloadList.querySelectorAll('[data-id]').forEach((el) => {
+      if (!downloads.has(el.dataset.id)) el.remove()
+    })
+  }
+
+  // ── SSE connection ────────────────────────────────────────────
+  let es = null
+  let reconnectTimer = null
+
+  function connect() {
+    if (es) es.close()
+
+    es = new EventSource('/api/events')
+
+    es.onopen = () => {
+      connDot.classList.add('connected')
+      connLabel.textContent = 'Live'
+      connBanner.classList.remove('show')
+      clearTimeout(reconnectTimer)
+    }
+
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+
+        if (msg.type === 'init') {
+          downloads.clear()
+          msg.downloads.forEach((d) => downloads.set(d.id, d))
+          renderAll()
+          return
+        }
+
+        const { jobId, type, data } = msg
+
+        if (type === 'deleted') {
+          downloads.delete(jobId)
+          renderAll()
+          return
+        }
+
+        const existing = downloads.get(jobId) || { id: jobId }
+
+        if (type === 'queued') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        } else if (type === 'ready') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        } else if (type === 'progress') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        } else if (type === 'status') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        } else if (type === 'completed') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        } else if (type === 'error') {
+          downloads.set(jobId, { ...existing, ...data, id: jobId })
+        }
+
+        renderAll()
+      } catch {}
+    }
+
+    es.onerror = () => {
+      connDot.classList.remove('connected')
+      connLabel.textContent = 'Disconnected'
+      connBanner.classList.add('show')
+      es.close()
+      reconnectTimer = setTimeout(connect, 3000)
+    }
+  }
+
+  connect()
+
+  // ── API actions ───────────────────────────────────────────────
+  async function sendCmd(jobId, action) {
+    try {
+      await fetch(`/api/downloads/${jobId}/${action}`, { method: 'POST' })
+    } catch {}
+  }
+
+  async function deleteDownload(jobId) {
+    if (!confirm('Remove this download from the list?')) return
+    try {
+      await fetch(`/api/downloads/${jobId}`, { method: 'DELETE' })
+    } catch {}
+  }
+</script>
+</body>
+</html>

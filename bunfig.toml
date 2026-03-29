@@ -1,0 +1,6 @@
+[install]
+trustedDependencies = ["node-datachannel", "utp-native"]
+
+[alias]
+"node-datachannel" = "./stubs/node-datachannel.js"
+"utp-native" = "./stubs/utp-native.js"

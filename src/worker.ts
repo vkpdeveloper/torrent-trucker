@@ -1,0 +1,162 @@
+import { Worker, type Job } from 'bullmq'
+import WebTorrent from 'webtorrent'
+import { Redis } from 'ioredis'
+import { pub, cmdSub, cmdEmitter, CMD_CHANNEL, UPDATES_CHANNEL } from './redis.ts'
+import { mkdirSync } from 'fs'
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
+const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || './downloads'
+
+mkdirSync(DOWNLOAD_DIR, { recursive: true })
+
+const client = new WebTorrent()
+
+client.on('error', (err) => console.error('[WebTorrent]', err))
+
+async function publishUpdate(update: object) {
+  await pub.publish(UPDATES_CHANNEL, JSON.stringify(update))
+}
+
+export function startWorker() {
+  const workerRedis = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
+
+  const worker = new Worker(
+    'torrent-downloads',
+    async (job: Job) => {
+      const { torrentKey, name: initialName } = job.data as {
+        torrentKey: string
+        name: string
+      }
+
+      const torrentBuffer = await workerRedis.getBuffer(torrentKey)
+      if (!torrentBuffer) throw new Error('Torrent data not found in Redis')
+
+      const cmdChannel = CMD_CHANNEL(job.id!)
+      await cmdSub.subscribe(cmdChannel)
+
+      return new Promise<void>((resolve, reject) => {
+        const torrent = client.add(torrentBuffer, { path: DOWNLOAD_DIR })
+
+        const cleanup = () => {
+          cmdEmitter.off(cmdChannel, cmdHandler)
+          cmdSub.unsubscribe(cmdChannel)
+          if (!(torrent as any).destroyed) torrent.destroy()
+        }
+
+        const cmdHandler = async (message: string) => {
+          try {
+            const { action } = JSON.parse(message) as { action: string }
+
+            if (action === 'pause') {
+              torrent.pause()
+              await workerRedis.hset(`torrent:info:${job.id}`, { status: 'paused' })
+              await publishUpdate({ jobId: job.id, type: 'status', data: { status: 'paused' } })
+            } else if (action === 'resume') {
+              torrent.resume()
+              await workerRedis.hset(`torrent:info:${job.id}`, { status: 'downloading' })
+              await publishUpdate({ jobId: job.id, type: 'status', data: { status: 'downloading' } })
+            } else if (action === 'stop') {
+              await workerRedis.hset(`torrent:info:${job.id}`, { status: 'stopped' })
+              await publishUpdate({ jobId: job.id, type: 'status', data: { status: 'stopped' } })
+              cleanup()
+              reject(new Error('Stopped by user'))
+            }
+          } catch (e) {
+            console.error('[Worker] Command handler error:', e)
+          }
+        }
+
+        cmdEmitter.on(cmdChannel, cmdHandler)
+
+        torrent.on('ready', async () => {
+          const name = torrent.name || initialName || 'Unknown'
+          await workerRedis.hset(`torrent:info:${job.id}`, {
+            name,
+            size: torrent.length.toString(),
+            status: 'downloading',
+            progress: '0',
+            downloadSpeed: '0',
+            uploadSpeed: '0',
+            numPeers: '0',
+            eta: '-1',
+            files: JSON.stringify(torrent.files.map((f) => ({ name: f.name, size: f.length }))),
+          })
+          await publishUpdate({
+            jobId: job.id,
+            type: 'ready',
+            data: {
+              name,
+              size: torrent.length,
+              status: 'downloading',
+            },
+          })
+        })
+
+        torrent.on('download', async () => {
+          const progress = Math.round(torrent.progress * 1000) / 10
+          const update = {
+            progress,
+            downloadSpeed: Math.round(torrent.downloadSpeed),
+            uploadSpeed: Math.round(torrent.uploadSpeed),
+            numPeers: torrent.numPeers,
+            eta: torrent.timeRemaining,
+            status: 'downloading',
+          }
+          await workerRedis.hset(`torrent:info:${job.id}`, {
+            progress: progress.toString(),
+            downloadSpeed: update.downloadSpeed.toString(),
+            uploadSpeed: update.uploadSpeed.toString(),
+            numPeers: update.numPeers.toString(),
+            eta: update.eta.toString(),
+          })
+          await publishUpdate({ jobId: job.id, type: 'progress', data: update })
+        })
+
+        torrent.on('done', async () => {
+          await workerRedis.hset(`torrent:info:${job.id}`, {
+            status: 'completed',
+            progress: '100',
+            downloadSpeed: '0',
+            eta: '0',
+          })
+          await publishUpdate({
+            jobId: job.id,
+            type: 'completed',
+            data: { status: 'completed', progress: 100 },
+          })
+          cleanup()
+          await workerRedis.del(torrentKey)
+          resolve()
+        })
+
+        torrent.on('error', async (err: unknown) => {
+          const message = err instanceof Error ? err.message : 'Unknown error'
+          await workerRedis.hset(`torrent:info:${job.id}`, {
+            status: 'error',
+            error: message,
+          })
+          await publishUpdate({ jobId: job.id, type: 'error', data: { error: message } })
+          cleanup()
+          reject(err instanceof Error ? err : new Error(message))
+        })
+      })
+    },
+    {
+      connection: new Redis(REDIS_URL, { maxRetriesPerRequest: null }),
+      concurrency: parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '3'),
+    },
+  )
+
+  worker.on('failed', (job, err) => {
+    if (err?.message !== 'Stopped by user') {
+      console.error(`[Worker] Job ${job?.id} failed:`, err?.message)
+    }
+  })
+
+  worker.on('completed', (job) => {
+    console.log(`[Worker] Job ${job.id} completed`)
+  })
+
+  console.log('[Worker] Started — listening for download jobs')
+  return worker
+}
