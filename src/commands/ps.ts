@@ -1,13 +1,7 @@
-import { createCliRenderer, Box, Text, t, bold, fg } from '@opentui/core'
-import type { ProxiedVNode } from '@opentui/core'
-import type { TextRenderable } from '@opentui/core'
-import type { BoxRenderable } from '@opentui/core'
 import { Redis } from 'ioredis'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
-
-// How often to repaint the stable tree (ms)
-const RENDER_INTERVAL = 250
+const POLL_INTERVAL = 5_000
 
 interface TorrentInfo {
   id: string
@@ -19,9 +13,6 @@ interface TorrentInfo {
   eta: number
   size: number
 }
-
-type TextNode = ProxiedVNode<typeof TextRenderable>
-type BoxNode  = ProxiedVNode<typeof BoxRenderable>
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -41,21 +32,9 @@ function formatEta(etaMs: number): string {
   return `${hrs}h ${mins % 60}m`
 }
 
-function statusColor(status: string): string {
-  switch (status) {
-    case 'downloading': return '#22c55e'
-    case 'paused':      return '#f59e0b'
-    case 'completed':   return '#3b82f6'
-    case 'error':       return '#ef4444'
-    case 'stopped':     return '#6b7280'
-    default:            return '#9ca3af'
-  }
-}
-
 function progressBar(pct: number, width: number): string {
   const filled = Math.round((pct / 100) * width)
-  const empty = width - filled
-  return '█'.repeat(filled) + '░'.repeat(empty)
+  return '█'.repeat(filled) + '░'.repeat(width - filled)
 }
 
 async function fetchAll(redis: Redis): Promise<TorrentInfo[]> {
@@ -80,190 +59,58 @@ async function fetchAll(redis: Redis): Promise<TorrentInfo[]> {
   return results.reverse()
 }
 
+function render(torrents: TorrentInfo[]) {
+  const cols = process.stdout.columns || 80
+  const barWidth = Math.max(10, Math.min(30, cols - 52))
+
+  const lines: string[] = []
+
+  lines.push(`TT — torrent trucker   ${new Date().toLocaleTimeString()}   press Ctrl+C to quit`)
+  lines.push('─'.repeat(cols))
+
+  if (torrents.length === 0) {
+    lines.push('  No downloads. Run: tt add <magnet>')
+  } else {
+    for (const tor of torrents) {
+      const pct = Math.min(100, Math.max(0, tor.progress))
+      const bar = progressBar(pct, barWidth)
+      const maxName = Math.max(10, cols - barWidth - 32)
+      const name = tor.name.length > maxName
+        ? tor.name.slice(0, maxName - 1) + '…'
+        : tor.name
+
+      const speed = tor.status === 'downloading' ? `  ${formatBytes(tor.downloadSpeed)}/s` : ''
+      const eta   = tor.status === 'downloading' ? `  ETA ${formatEta(tor.eta)}` : ''
+      const peers = tor.status === 'downloading' ? `  ${tor.numPeers} peers` : ''
+
+      lines.push(`  ${name}  [${tor.status}]${speed}${eta}${peers}`)
+      lines.push(`  ${bar} ${pct.toFixed(1)}%  ${formatBytes(tor.size)}  id:${tor.id.slice(0, 8)}`)
+      lines.push('')
+    }
+  }
+
+  // Move cursor to top-left, clear screen, print
+  process.stdout.write('\x1b[H\x1b[J' + lines.join('\n') + '\n')
+}
+
 export async function commandPs() {
   const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
-  const sub = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
 
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    screenMode: 'alternate-screen',
-    consoleMode: 'disabled',
-  })
+  // Initial render immediately
+  let torrents = await fetchAll(redis)
+  render(torrents)
 
-  let torrents: TorrentInfo[] = await fetchAll(redis)
-  let dirty = true
-
-  // ── Stable node references ──────────────────────────────────────────────────
-
-  // Header clock — mutated in place each tick
-  const clockText = Text({ content: '' }) as unknown as TextNode
-
-  const header = Box(
-    {
-      width: '100%',
-      height: 3,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingLeft: 2,
-      paddingRight: 2,
-      backgroundColor: '#111827',
-      borderStyle: 'single',
-    },
-    Text({ content: t`${bold(fg('#22c55e')('TT'))} ${fg('#9ca3af')('torrent trucker')}` }),
-    Box({ flexGrow: 1 }),
-    clockText,
-  )
-
-  // Empty-state node
-  const emptyText = Text({
-    content: t`${fg('#6b7280')('No downloads. Run ')}${fg('#22c55e')('tt add <magnet>')}${fg('#6b7280')(' to start.')}`,
-  }) as unknown as TextNode
-
-  const emptyBox = Box(
-    { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-    emptyText,
-  ) as unknown as BoxNode
-
-  // Rows container — we add/remove row boxes here when count changes
-  const rowsContainer = Box({
-    flexGrow: 1,
-    flexDirection: 'column',
-    overflow: 'hidden',
-    paddingTop: 1,
-  }) as unknown as BoxNode
-
-  const root = Box(
-    { width: '100%', height: '100%', flexDirection: 'column' },
-    header,
-    rowsContainer,
-  )
-
-  // Per-row stable text nodes
-  interface RowNodes {
-    nameStatus:   TextNode
-    progressLine: TextNode
-    rowBox:       BoxNode
-  }
-  let rowNodes: RowNodes[] = []
-
-  function ensureRows(count: number) {
-    // Add missing rows
-    while (rowNodes.length < count) {
-      const nameStatus   = Text({ content: '' }) as unknown as TextNode
-      const progressLine = Text({ content: '' }) as unknown as TextNode
-
-      const rowBox = Box(
-        {
-          width: '100%',
-          flexDirection: 'column',
-          paddingLeft: 2,
-          paddingRight: 2,
-          paddingTop: 1,
-          marginBottom: 1,
-        },
-        Box({ flexDirection: 'row', width: '100%' }, nameStatus, Box({ flexGrow: 1 })),
-        Box({ flexDirection: 'row', width: '100%', marginTop: 1 }, progressLine, Box({ flexGrow: 1 })),
-      ) as unknown as BoxNode
-
-      rowsContainer.add(rowBox)
-      rowNodes.push({ nameStatus, progressLine, rowBox })
-    }
-
-    // Remove excess rows
-    while (rowNodes.length > count) {
-      const last = rowNodes.pop()!
-      rowsContainer.remove(last.rowBox.id)
-      last.rowBox.destroyRecursively()
-    }
-  }
-
-  let emptyBoxMounted = false
-
-  function updateContent() {
-    const termW = renderer.width
-    const barWidth = Math.max(10, Math.min(40, termW - 50))
-
-    // Update clock
-    clockText.content =
-      t`${fg('#9ca3af')(new Date().toLocaleTimeString())}  ${fg('#6b7280')('q to quit')}`
-
-    if (torrents.length === 0) {
-      if (!emptyBoxMounted) {
-        ensureRows(0)
-        rowsContainer.add(emptyBox)
-        emptyBoxMounted = true
-      }
-      return
-    }
-
-    // Remove empty box if it was mounted
-    if (emptyBoxMounted) {
-      rowsContainer.remove(emptyBox.id)
-      emptyBoxMounted = false
-    }
-
-    ensureRows(torrents.length)
-
-    for (let i = 0; i < torrents.length; i++) {
-      const tor   = torrents[i]!
-      const nodes = rowNodes[i]!
-
-      const pct   = Math.min(100, Math.max(0, tor.progress))
-      const bar   = progressBar(pct, barWidth)
-      const sColor = statusColor(tor.status)
-      const nameWidth = Math.max(10, termW - barWidth - 30)
-      const name  = tor.name.length > nameWidth
-        ? tor.name.slice(0, nameWidth - 1) + '…'
-        : tor.name.padEnd(nameWidth)
-
-      const speed = tor.status === 'downloading' ? ` ${formatBytes(tor.downloadSpeed)}/s` : ''
-      const eta   = tor.status === 'downloading' ? ` ETA ${formatEta(tor.eta)}` : ''
-      const peers = tor.status === 'downloading' ? ` ${tor.numPeers}p` : ''
-
-      nodes.nameStatus.content =
-        t`${fg(sColor)('●')} ${bold(name)}  ${fg(sColor)(tor.status)}${fg('#6b7280')(speed)}${fg('#6b7280')(eta)}${fg('#6b7280')(peers)}`
-
-      nodes.progressLine.content =
-        t`  ${fg(sColor)(bar)} ${fg('#9ca3af')(`${pct.toFixed(1)}%`)} ${fg('#6b7280')(formatBytes(tor.size))}  ${fg('#6b7280')(tor.id.slice(0, 8))}`
-    }
-  }
-
-  // Mount the stable root tree once
-  renderer.root.add(root)
-  updateContent()
-
-  // ── Render loop: repaint at fixed interval only when dirty ──────────────────
-  const renderTimer = setInterval(() => {
-    if (!dirty) return
-    dirty = false
-    updateContent()
-  }, RENDER_INTERVAL)
-
-  // ── Data refresh: pull from Redis every 5s, then mark dirty for render ──────
+  // Poll every 5s
   const pollTimer = setInterval(async () => {
     torrents = await fetchAll(redis)
-    dirty = true
-  }, 5_000)
+    render(torrents)
+  }, POLL_INTERVAL)
 
-  // Sub is kept open so we don't miss connection errors, but we ignore messages —
-  // all state comes from the 5s poll above.
-  await sub.subscribe('torrent:updates')
-
-  function cleanup() {
-    clearInterval(renderTimer)
+  // Cleanup on Ctrl+C
+  process.on('SIGINT', () => {
     clearInterval(pollTimer)
-    sub.disconnect()
     redis.disconnect()
-  }
-
-  renderer.addInputHandler((seq) => {
-    if (seq === 'q' || seq === 'Q') {
-      cleanup()
-      renderer.destroy()
-      process.exit(0)
-    }
-    return false
+    process.stdout.write('\x1b[?25h') // restore cursor
+    process.exit(0)
   })
-
-  renderer.on('destroy', cleanup)
 }
