@@ -4,7 +4,7 @@ ENTRY   := src/index.ts
 INSTALL := /usr/local/bin
 DOTENV  := .env
 
-.PHONY: all build install uninstall clean help
+.PHONY: all build install install-service uninstall clean help
 
 all: build
 
@@ -31,6 +31,15 @@ install: build
 	@echo "Installing $(BIN) to $(INSTALL)/$(BIN)..."
 	sudo install -m 755 $(OUTDIR)/$(BIN) $(INSTALL)/$(BIN)
 	@echo "Installed. Run 'tt --help' to get started."
+
+## install-service: Install and enable the systemd service
+install-service:
+	sudo cp torrent-trucker.service /etc/systemd/system/
+	sudo systemctl daemon-reload
+	sudo systemctl enable torrent-trucker
+	sudo systemctl restart torrent-trucker
+	@sleep 2
+	sudo systemctl status torrent-trucker
 
 ## uninstall: Remove the installed binary
 uninstall:
