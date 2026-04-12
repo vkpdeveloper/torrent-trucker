@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis'
-import { pub, CMD_CHANNEL } from '../redis.ts'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
+const CMD_CHANNEL = (jobId: string) => `torrent:cmd:${jobId}`
 
 export async function commandRm(args: string[]) {
   const id = args[0]
@@ -12,6 +12,7 @@ export async function commandRm(args: string[]) {
   }
 
   const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
+  const pub = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
 
   const raw = await redis.hgetall(`torrent:info:${id}`)
   if (!raw || !raw.name) {

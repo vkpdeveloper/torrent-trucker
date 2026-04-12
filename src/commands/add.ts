@@ -1,6 +1,7 @@
 import { downloadQueue } from '../queue.ts'
-import { redis } from '../redis.ts'
-import { randomUUID } from 'crypto'
+import { Redis } from 'ioredis'
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
 export async function commandAdd(args: string[]) {
   const magnet = args[0]
@@ -21,6 +22,8 @@ export async function commandAdd(args: string[]) {
     const dn = new URL(magnet).searchParams.get('dn')
     if (dn) name = decodeURIComponent(dn)
   } catch {}
+
+  const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: null })
 
   const job = await downloadQueue.add('download', {
     magnetLink: magnet,
