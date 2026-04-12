@@ -5,11 +5,13 @@ After=network.target redis.service
 [Service]
 Type=simple
 User=vaibhav
-WorkingDirectory=/home/vaibhav/Developer/docker/torrent-trucker
-EnvironmentFile=/home/vaibhav/Developer/docker/torrent-trucker/.env
-ExecStart=/home/vaibhav/.bun/bin/bun src/index.ts
+WorkingDirectory=/home/vaibhav/Movies
+ExecStart=/usr/local/bin/tt daemon
 Restart=always
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=torrent-trucker
 
 [Install]
 WantedBy=multi-user.target
