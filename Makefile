@@ -23,16 +23,16 @@ build:
 	@echo "Binary ready: $(OUTDIR)/$(BIN)"
 
 ## install: Build and install the binary to $(INSTALL)/tt
-##          Requires sudo on Linux (writing to /usr/local/bin)
+##          Uses sudo only for the copy step
 install: build
 	@echo "Installing $(BIN) to $(INSTALL)/$(BIN)..."
-	install -m 755 $(OUTDIR)/$(BIN) $(INSTALL)/$(BIN)
+	sudo install -m 755 $(OUTDIR)/$(BIN) $(INSTALL)/$(BIN)
 	@echo "Installed. Run 'tt --help' to get started."
 
 ## uninstall: Remove the installed binary
 uninstall:
 	@echo "Removing $(INSTALL)/$(BIN)..."
-	rm -f $(INSTALL)/$(BIN)
+	sudo rm -f $(INSTALL)/$(BIN)
 	@echo "Done."
 
 ## clean: Remove the dist/ directory
