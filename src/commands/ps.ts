@@ -1,7 +1,13 @@
-import { createCliRenderer, Box, Text, t, bold, fg, TextAttributes } from '@opentui/core'
+import { createCliRenderer, Box, Text, t, bold, fg } from '@opentui/core'
+import type { ProxiedVNode } from '@opentui/core'
+import type { TextRenderable } from '@opentui/core'
+import type { BoxRenderable } from '@opentui/core'
 import { Redis } from 'ioredis'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
+
+// How often to repaint the stable tree (ms)
+const RENDER_INTERVAL = 250
 
 interface TorrentInfo {
   id: string
@@ -13,6 +19,9 @@ interface TorrentInfo {
   eta: number
   size: number
 }
+
+type TextNode = ProxiedVNode<typeof TextRenderable>
+type BoxNode  = ProxiedVNode<typeof BoxRenderable>
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -81,67 +90,69 @@ export async function commandPs() {
     consoleMode: 'disabled',
   })
 
-  // State
   let torrents: TorrentInfo[] = await fetchAll(redis)
+  let dirty = true
 
-  function buildUI() {
-    const termW = renderer.width
-    const barWidth = Math.max(10, Math.min(40, termW - 50))
+  // ── Stable node references ──────────────────────────────────────────────────
 
-    // Header
-    const header = Box(
-      {
-        width: '100%',
-        height: 3,
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingLeft: 2,
-        paddingRight: 2,
-        backgroundColor: '#111827',
-        borderStyle: 'single',
-      },
-      Text({
-        content: t`${bold(fg('#22c55e')('TT'))} ${fg('#9ca3af')('torrent trucker')}`,
-      }),
-      Box({ flexGrow: 1 }),
-      Text({
-        content: t`${fg('#9ca3af')(new Date().toLocaleTimeString())}  ${fg('#6b7280')('q to quit')}`,
-      }),
-    )
+  // Header clock — mutated in place each tick
+  const clockText = Text({ content: '' }) as unknown as TextNode
 
-    if (torrents.length === 0) {
-      return Box(
-        { width: '100%', height: '100%', flexDirection: 'column' },
-        header,
-        Box(
-          {
-            flexGrow: 1,
-            justifyContent: 'center',
-            alignItems: 'center',
-          },
-          Text({
-            content: t`${fg('#6b7280')('No downloads. Run ')}${fg('#22c55e')('tt add <magnet>')}${fg('#6b7280')(' to start.')}`,
-          }),
-        ),
-        Text({
-          content: ' '.repeat(termW),
-          position: 'absolute',
-          bottom: 0,
-        }),
-      )
-    }
+  const header = Box(
+    {
+      width: '100%',
+      height: 3,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingLeft: 2,
+      paddingRight: 2,
+      backgroundColor: '#111827',
+      borderStyle: 'single',
+    },
+    Text({ content: t`${bold(fg('#22c55e')('TT'))} ${fg('#9ca3af')('torrent trucker')}` }),
+    Box({ flexGrow: 1 }),
+    clockText,
+  )
 
-    const rows = torrents.map((t_) => {
-      const pct = Math.min(100, Math.max(0, t_.progress))
-      const bar = progressBar(pct, barWidth)
-      const speed = t_.status === 'downloading' ? ` ${formatBytes(t_.downloadSpeed)}/s` : ''
-      const eta = t_.status === 'downloading' ? ` ETA ${formatEta(t_.eta)}` : ''
-      const peers = t_.status === 'downloading' ? ` ${t_.numPeers}p` : ''
-      const sColor = statusColor(t_.status)
-      const nameWidth = Math.max(10, termW - barWidth - 30)
-      const name = t_.name.length > nameWidth ? t_.name.slice(0, nameWidth - 1) + '…' : t_.name.padEnd(nameWidth)
+  // Empty-state node
+  const emptyText = Text({
+    content: t`${fg('#6b7280')('No downloads. Run ')}${fg('#22c55e')('tt add <magnet>')}${fg('#6b7280')(' to start.')}`,
+  }) as unknown as TextNode
 
-      return Box(
+  const emptyBox = Box(
+    { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+    emptyText,
+  ) as unknown as BoxNode
+
+  // Rows container — we add/remove row boxes here when count changes
+  const rowsContainer = Box({
+    flexGrow: 1,
+    flexDirection: 'column',
+    overflow: 'hidden',
+    paddingTop: 1,
+  }) as unknown as BoxNode
+
+  const root = Box(
+    { width: '100%', height: '100%', flexDirection: 'column' },
+    header,
+    rowsContainer,
+  )
+
+  // Per-row stable text nodes
+  interface RowNodes {
+    nameStatus:   TextNode
+    progressLine: TextNode
+    rowBox:       BoxNode
+  }
+  let rowNodes: RowNodes[] = []
+
+  function ensureRows(count: number) {
+    // Add missing rows
+    while (rowNodes.length < count) {
+      const nameStatus   = Text({ content: '' }) as unknown as TextNode
+      const progressLine = Text({ content: '' }) as unknown as TextNode
+
+      const rowBox = Box(
         {
           width: '100%',
           flexDirection: 'column',
@@ -150,96 +161,109 @@ export async function commandPs() {
           paddingTop: 1,
           marginBottom: 1,
         },
-        // Name + status line
-        Box(
-          { flexDirection: 'row', width: '100%' },
-          Text({
-            content: t`${fg(sColor)('●')} ${bold(name)}`,
-          }),
-          Box({ flexGrow: 1 }),
-          Text({
-            content: t`${fg(sColor)(t_.status)}${fg('#6b7280')(speed)}${fg('#6b7280')(eta)}${fg('#6b7280')(peers)}`,
-          }),
-        ),
-        // Progress bar line
-        Box(
-          { flexDirection: 'row', width: '100%', marginTop: 1 },
-          Text({
-            content: t`  ${fg(sColor)(bar)} ${fg('#9ca3af')(`${pct.toFixed(1)}%`)} ${fg('#6b7280')(formatBytes(t_.size))}`,
-          }),
-          Box({ flexGrow: 1 }),
-          Text({
-            content: t`${fg('#6b7280')(t_.id.slice(0, 8))}`,
-          }),
-        ),
-      )
-    })
+        Box({ flexDirection: 'row', width: '100%' }, nameStatus, Box({ flexGrow: 1 })),
+        Box({ flexDirection: 'row', width: '100%', marginTop: 1 }, progressLine, Box({ flexGrow: 1 })),
+      ) as unknown as BoxNode
 
-    return Box(
-      { width: '100%', height: '100%', flexDirection: 'column' },
-      header,
-      Box(
-        {
-          flexGrow: 1,
-          flexDirection: 'column',
-          overflow: 'hidden',
-          paddingTop: 1,
-        },
-        ...rows,
-      ),
-    )
+      rowsContainer.add(rowBox)
+      rowNodes.push({ nameStatus, progressLine, rowBox })
+    }
+
+    // Remove excess rows
+    while (rowNodes.length > count) {
+      const last = rowNodes.pop()!
+      rowsContainer.remove(last.rowBox.id)
+      last.rowBox.destroyRecursively()
+    }
   }
 
-  function render() {
-    for (const c of renderer.root.getChildren()) renderer.root.remove(c.id)
-    renderer.root.add(buildUI())
-  }
+  let emptyBoxMounted = false
 
-  render()
+  function updateContent() {
+    const termW = renderer.width
+    const barWidth = Math.max(10, Math.min(40, termW - 50))
 
-  // Subscribe to live updates
-  await sub.subscribe('torrent:updates')
-  sub.on('message', async (_ch, msg) => {
-    try {
-      const update = JSON.parse(msg) as { jobId: string; type: string; data: Record<string, unknown> }
-      const existing = torrents.find((t_) => t_.id === update.jobId)
-      if (existing) {
-        if (update.data.status) existing.status = update.data.status as string
-        if (update.data.progress !== undefined) existing.progress = update.data.progress as number
-        if (update.data.downloadSpeed !== undefined) existing.downloadSpeed = update.data.downloadSpeed as number
-        if (update.data.numPeers !== undefined) existing.numPeers = update.data.numPeers as number
-        if (update.data.eta !== undefined) existing.eta = update.data.eta as number
-        if (update.data.name) existing.name = update.data.name as string
-        if (update.data.size) existing.size = update.data.size as number
-      } else {
-        // New job appeared — refetch
-        torrents = await fetchAll(redis)
+    // Update clock
+    clockText.content =
+      t`${fg('#9ca3af')(new Date().toLocaleTimeString())}  ${fg('#6b7280')('q to quit')}`
+
+    if (torrents.length === 0) {
+      if (!emptyBoxMounted) {
+        ensureRows(0)
+        rowsContainer.add(emptyBox)
+        emptyBoxMounted = true
       }
-      render()
-    } catch {}
-  })
+      return
+    }
 
-  // Refresh clock + detect new jobs every 5s
-  const timer = setInterval(async () => {
+    // Remove empty box if it was mounted
+    if (emptyBoxMounted) {
+      rowsContainer.remove(emptyBox.id)
+      emptyBoxMounted = false
+    }
+
+    ensureRows(torrents.length)
+
+    for (let i = 0; i < torrents.length; i++) {
+      const tor   = torrents[i]!
+      const nodes = rowNodes[i]!
+
+      const pct   = Math.min(100, Math.max(0, tor.progress))
+      const bar   = progressBar(pct, barWidth)
+      const sColor = statusColor(tor.status)
+      const nameWidth = Math.max(10, termW - barWidth - 30)
+      const name  = tor.name.length > nameWidth
+        ? tor.name.slice(0, nameWidth - 1) + '…'
+        : tor.name.padEnd(nameWidth)
+
+      const speed = tor.status === 'downloading' ? ` ${formatBytes(tor.downloadSpeed)}/s` : ''
+      const eta   = tor.status === 'downloading' ? ` ETA ${formatEta(tor.eta)}` : ''
+      const peers = tor.status === 'downloading' ? ` ${tor.numPeers}p` : ''
+
+      nodes.nameStatus.content =
+        t`${fg(sColor)('●')} ${bold(name)}  ${fg(sColor)(tor.status)}${fg('#6b7280')(speed)}${fg('#6b7280')(eta)}${fg('#6b7280')(peers)}`
+
+      nodes.progressLine.content =
+        t`  ${fg(sColor)(bar)} ${fg('#9ca3af')(`${pct.toFixed(1)}%`)} ${fg('#6b7280')(formatBytes(tor.size))}  ${fg('#6b7280')(tor.id.slice(0, 8))}`
+    }
+  }
+
+  // Mount the stable root tree once
+  renderer.root.add(root)
+  updateContent()
+
+  // ── Render loop: repaint at fixed interval only when dirty ──────────────────
+  const renderTimer = setInterval(() => {
+    if (!dirty) return
+    dirty = false
+    updateContent()
+  }, RENDER_INTERVAL)
+
+  // ── Data refresh: pull from Redis every 5s, then mark dirty for render ──────
+  const pollTimer = setInterval(async () => {
     torrents = await fetchAll(redis)
-    render()
-  }, 5000)
+    dirty = true
+  }, 5_000)
 
-  // Quit on 'q'
+  // Sub is kept open so we don't miss connection errors, but we ignore messages —
+  // all state comes from the 5s poll above.
+  await sub.subscribe('torrent:updates')
+
+  function cleanup() {
+    clearInterval(renderTimer)
+    clearInterval(pollTimer)
+    sub.disconnect()
+    redis.disconnect()
+  }
+
   renderer.addInputHandler((seq) => {
     if (seq === 'q' || seq === 'Q') {
-      clearInterval(timer)
-      sub.disconnect()
-      redis.disconnect()
+      cleanup()
       renderer.destroy()
       process.exit(0)
     }
     return false
   })
 
-  renderer.on('destroy', () => {
-    clearInterval(timer)
-    sub.disconnect()
-    redis.disconnect()
-  })
+  renderer.on('destroy', cleanup)
 }
