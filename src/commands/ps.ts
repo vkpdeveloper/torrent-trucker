@@ -37,6 +37,9 @@ function progressBar(pct: number, width: number): string {
   return '█'.repeat(filled) + '░'.repeat(width - filled)
 }
 
+const COMPLETED_STATUSES = new Set(['completed', 'stopped', 'error'])
+const MAX_COMPLETED = 2
+
 async function fetchAll(redis: Redis): Promise<TorrentInfo[]> {
   const ids = await redis.zrange('torrent:jobs', 0, -1)
   if (!ids.length) return []
@@ -56,7 +59,22 @@ async function fetchAll(redis: Redis): Promise<TorrentInfo[]> {
       size: parseInt(raw.size || '0'),
     })
   }
-  return results.reverse()
+
+  // Newest first (zrange returns oldest-first by score)
+  results.reverse()
+
+  const active: TorrentInfo[] = []
+  const completed: TorrentInfo[] = []
+  for (const tor of results) {
+    if (COMPLETED_STATUSES.has(tor.status)) {
+      completed.push(tor)
+    } else {
+      active.push(tor)
+    }
+  }
+
+  // Show all active downloads + only the 2 most recent completed ones
+  return [...active, ...completed.slice(0, MAX_COMPLETED)]
 }
 
 function render(torrents: TorrentInfo[]) {
