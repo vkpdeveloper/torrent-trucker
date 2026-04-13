@@ -52,4 +52,5 @@ export async function commandAdd(args: string[]) {
 
   await downloadQueue.disconnect()
   await redis.disconnect()
+  process.exit(0)
 }

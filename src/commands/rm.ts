@@ -39,4 +39,5 @@ export async function commandRm(args: string[]) {
 
   await redis.disconnect()
   await pub.disconnect()
+  process.exit(0)
 }

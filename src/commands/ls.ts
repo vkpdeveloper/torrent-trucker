@@ -30,7 +30,7 @@ export async function commandLs() {
   if (!ids.length) {
     console.log('No downloads.')
     await redis.disconnect()
-    return
+    process.exit(0)
   }
 
   const COL_ID    = 8
@@ -72,4 +72,5 @@ export async function commandLs() {
   }
 
   await redis.disconnect()
+  process.exit(0)
 }
