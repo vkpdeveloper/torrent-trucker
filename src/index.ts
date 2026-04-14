@@ -3,6 +3,7 @@ import { commandAdd } from './commands/add.ts'
 import { commandPs } from './commands/ps.ts'
 import { commandLs } from './commands/ls.ts'
 import { commandRm } from './commands/rm.ts'
+import { commandResume } from './commands/resume.ts'
 import { commandDaemon } from './commands/daemon.ts'
 
 const args = process.argv.slice(2)
@@ -17,6 +18,7 @@ USAGE
   tt ps                Live progress of active downloads
   tt ls                List all downloads
   tt rm <id>           Remove a download
+  tt resume <id>       Resume a stuck, stopped, or errored download
 
 OPTIONS
   -h, --help           Show this help
@@ -42,6 +44,9 @@ switch (cmd) {
     break
   case 'rm':
     await commandRm(args.slice(1))
+    break
+  case 'resume':
+    await commandResume(args.slice(1))
     break
   default:
     process.stderr.write(`tt: unknown command "${cmd}"\nRun "tt --help" for usage.\n`)
